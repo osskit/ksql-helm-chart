@@ -1,0 +1,69 @@
+{{- if .Capabilities.APIVersions.Has "apps/v1" }}
+apiVersion: apps/v1
+{{- else }}
+apiVersion: apps/v1beta2
+{{- end }}
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-ksql
+  labels:
+    app: {{ .Release.Name }}-ksql
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-ksql
+  template:
+    metadata:
+      labels:
+       app: {{ .Release.Name }}-ksql
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      containers:
+        - name: ksql
+          image: {{ .Values.image.registry }}/{{ .Values.image.name | default .Release.Name }}:{{ .Values.image.tag }}
+          imagePullPolicy: "{{ .Values.imagePullPolicy }}"
+          ports:
+            - name: server
+              containerPort: {{ .Values.servicePort}}
+              protocol: TCP
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          env:
+            - name: KSQL_BOOTSTRAP_SERVERS
+              value: {{ .Values.broker }}
+            - name: KSQL_KSQL_SERVICE_ID
+              value: {{ .Values.serviceId | default .Release.Name }}
+            - name: KSQL_HEAP_OPTS
+              value: "{{ .Values.heapOptions }}"
+            - name: KSQL_LISTENERS
+              value: http://0.0.0.0:8088
+            {{ if .Values.auth.enabled }}
+            - name: KSQL_SECURITY_PROTOCOL
+              value: SASL_SSL
+            - name: KSQL_SASL_MECHANISM
+              value: PLAIN
+            - name: KSQL_SASL_JAAS_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-ksql
+                  key: SASL_JAAS_CONFIG
+            {{ end }}
+            {{- range $key, $value := .Values.config }}
+            - name: {{ printf "KSQL_%s" $key | replace "." "_" | upper | quote }}
+              value: {{ $value | quote }}
+          {{- end }}
+          {{ if .Values.auth.enabled }}
+          volumeMounts:
+            - name: secrets-volume
+              mountPath: /secrets-files
+        {{ end }}
+    {{ if .Values.auth.enabled }}
+      volumes:
+        - name: secrets-volume
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Release.Name }}-ksql
+    {{ end }}
